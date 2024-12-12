@@ -14,6 +14,7 @@ const SpanChunk = require('../../lib/context/span-chunk')
 const DataSender = require('../../lib/client/data-sender')
 const MockGrpcDataSender = require('../client/mock-grpc-data-sender')
 const SqlMetaData = require('../../lib/client/sql-meta-data')
+const GrpcDataSender = require('../../lib/client/grpc-data-sender')
 
 class MockDataSender extends DataSender {
   constructor(config, dataSender) {
@@ -67,7 +68,12 @@ class MockDataSender extends DataSender {
   }
 }
 
-const dataSender = () => {
+const dataSender = (conf, agentInfo) => {
+  if (typeof conf?.collectorSpanPort === 'number') {
+    return new MockDataSender({
+      enabledDataSending: true,
+    }, new GrpcDataSender(conf.collectorIp, conf.collectorSpanPort, conf.collectorStatPort, conf.collectorTcpPort, agentInfo, conf))
+  }
   return new MockDataSender({
     enabledDataSending: true,
   }, new MockGrpcDataSender('', 0, 0, 0, {
