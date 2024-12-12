@@ -25,6 +25,10 @@ class MockDataSender extends DataSender {
   }
 
   send(data) {
+    if (this.closed) {
+      return
+    }
+
     if (data instanceof AgentInfo) {
       this.mockAgentInfo = data
       super.send(data)
@@ -65,6 +69,11 @@ class MockDataSender extends DataSender {
     this.mockAPIMetaInfos = []
     this.mockSpanChunks = []
     this.mockSpans = []
+  }
+
+  close() {
+    super.close()
+    this.closed = true
   }
 }
 
