@@ -107,4 +107,21 @@ router.get('/api2', function (req, res, next) {
   res.status(200).json({ "result": "ok" })
 })
 
+router.get('/exception/handled', function (req, res, next) {
+  try {
+    throw new Error('Pinpoint handled exception test route')
+  } catch (error) {
+    res.status(200).json({
+      result: 'handled',
+      message: error.message
+    })
+  }
+})
+
+router.get('/exception/unhandled', function (req, res, next) {
+  const error = new Error('Pinpoint unhandled exception test route')
+  error.status = 500
+  next(error)
+})
+
 module.exports = router
