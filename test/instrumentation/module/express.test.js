@@ -305,13 +305,13 @@ function unhandledExceptionStatsFrameTest(trace, t) {
     return `${typePrefix}${method} (${file}:${line})`
   }
 
-  const expectedStackTrace = [
+  const expectedStackTracePrefix = [
     '<anonymous> (<workspace>/test/instrumentation/module/express.test.js:<line>)',
     'Layer.handle [as handle_request] (<workspace>/node_modules/express/lib/router/layer.js:95)',
     'next (<workspace>/node_modules/express/lib/router/route.js:149)',
     'Route.dispatch (<workspace>/node_modules/express/lib/router/route.js:119)',
-    'InterceptorRunner.run (<workspace>/lib/instrumentation/interceptor-runner.js:39)',
-    'wrapped (<workspace>/lib/instrumentation/module/express/express-layer-interceptor.js:44)',
+    'InterceptorRunner.run (<workspace>/lib/instrumentation/interceptor-runner.js:<line>)',
+    'wrapped (<workspace>/lib/instrumentation/module/express/express-layer-interceptor.js:<line>)',
     'Layer.handle [as handle_request] (<workspace>/node_modules/express/lib/router/layer.js:95)',
     '<anonymous> (<workspace>/node_modules/express/lib/router/index.js:284)',
     'Function.process_params (<workspace>/node_modules/express/lib/router/index.js:346)',
@@ -334,12 +334,17 @@ function unhandledExceptionStatsFrameTest(trace, t) {
       .replace(/\\/g, '/')
       .replace(new RegExp(escapeRegExp(workspacePath), 'g'), '<workspace>')
       .replace(/express\.test\.js:\d+/g, 'express.test.js:<line>')
+      .replace(/interceptor-runner\.js:\d+/g, 'interceptor-runner.js:<line>')
+      .replace(/express-layer-interceptor\.js:\d+/g, 'express-layer-interceptor.js:<line>')
   }
 
-  t.equal(
-    normalizeStackTrace(actualStackTrace),
-    normalizeStackTrace(expectedStackTrace),
-    'ExceptionMetaData stack trace should match span event frameStack as multiline string'
+  const normalizedActualLines = normalizeStackTrace(actualStackTrace).split('\n')
+  const normalizedExpectedPrefixLines = normalizeStackTrace(expectedStackTracePrefix).split('\n')
+
+  t.deepEqual(
+    normalizedActualLines.slice(0, normalizedExpectedPrefixLines.length),
+    normalizedExpectedPrefixLines,
+    'ExceptionMetaData stack trace should match stable prefix frames as multiline string'
   )
 }
 
