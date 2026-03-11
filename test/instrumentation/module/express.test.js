@@ -117,6 +117,15 @@ test(`${testName1} Should record request in basic route`, function (t) {
     next(new Error('error case'))
   })
 
+  const exceptionUnhandledSymbol = Symbol('exceptionUnhandled')
+  app.get('/exception/unhandled', function (req, res, next) {
+    errorOrder++
+    pathSymbol = exceptionUnhandledSymbol
+    const error = new Error('Pinpoint unhandled exception test route')
+    error.status = 500
+    next(error)
+  })
+
   app.use(function (err, req, res, next) {
     if (pathSymbol == express3Symbol) {
       t.equal(errorOrder, 1, 'express3 error order')
@@ -124,12 +133,17 @@ test(`${testName1} Should record request in basic route`, function (t) {
     if (pathSymbol === express4Symbol) {
       t.equal(errorOrder, 2, 'express4 error order')
     }
+    if (pathSymbol === exceptionUnhandledSymbol) {
+      t.equal(errorOrder, 3, 'exception/unhandled error order')
+    }
 
     agent.callbackTraceClose((trace) => {
       if (errorOrder == 1) {
         throwHandleTest(trace, t)
       } else if (errorOrder == 2) {
         nextErrorHandleTest(trace, t)
+      } else if (errorOrder == 3) {
+        unhandledExceptionStatsFrameTest(trace, t)
       }
     })
 
@@ -156,6 +170,12 @@ test(`${testName1} Should record request in basic route`, function (t) {
       await axios.get(getServerUrl('/express4'))
     } catch (error) {
       t.equal(error.response.status, 500, 'axios.get(getServerUrl(/express4))')
+    }
+
+    try {
+      await axios.get(getServerUrl('/exception/unhandled'))
+    } catch (error) {
+      t.equal(error.response.status, 500, 'axios.get(getServerUrl(/exception/unhandled))')
     }
 
     t.end()
@@ -254,6 +274,57 @@ function nextErrorHandleTest(trace, t) {
   t.equal(actualExceptions[0].getStarttime(), actualSpanEventError.startTime, `ExceptionMetaData exception start time ${actualSpanEventError.startTime}`)
   t.equal(actualExceptions[0].getExceptionid(), actualSpanEventError.exceptionId, `ExceptionMetaData exception id ${actualSpanEventError.exceptionId}`)
   t.equal(actualExceptions[0].getExceptiondepth(), actualSpanEventError.exceptionDepth, `ExceptionMetaData exception depth ${actualSpanEventError.exceptionDepth}`)
+}
+
+function unhandledExceptionStatsFrameTest(trace, t) {
+  const actualExceptionMetaData = trace.repository.dataSender.dataSender.actualExceptionMetaData
+  t.ok(actualExceptionMetaData, 'ExceptionMetaData should be sent')
+
+  const actualExceptions = actualExceptionMetaData.getExceptionsList()
+  t.equal(actualExceptions.length, 1, 'ExceptionMetaData exceptions length 1')
+
+  const actualException = actualExceptions[0]
+  const actualSpanEventError = trace.spanBuilder.spanEventList[1].exception
+
+  t.equal(actualException.getExceptionmessage(), actualSpanEventError.errorMessage, 'ExceptionMetaData exception message should match span event error message')
+  t.equal(actualException.getExceptionid(), actualSpanEventError.exceptionId, 'ExceptionMetaData exception id should match span event exception id')
+
+  const stackTraceElements = actualException.getStacktraceelementList()
+  const frameStack = actualSpanEventError.frameStack
+
+  t.ok(stackTraceElements.length > 0, 'ExceptionMetaData stacktraceelementList should not be empty')
+  t.equal(stackTraceElements.length, frameStack.length, 'ExceptionMetaData stacktraceelementList length should match span event frameStack length')
+
+  const toStackTraceLine = (className, methodName, fileName, lineNumber) => {
+    const typePrefix = className ? `${className}.` : ''
+    const method = methodName || '<anonymous>'
+    const file = fileName || 'unknown'
+    const line = Number.isInteger(lineNumber) ? lineNumber : 0
+    return `${typePrefix}${method} (${file}:${line})`
+  }
+
+  const expectedStackTrace =
+`<anonymous> (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/test/instrumentation/module/express.test.js:124)
+Layer.handle [as handle_request] (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/layer.js:95)
+next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/route.js:149)
+Route.dispatch (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/route.js:119)
+InterceptorRunner.run (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/lib/instrumentation/interceptor-runner.js:39)
+wrapped (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/lib/instrumentation/module/express/express-layer-interceptor.js:44)
+Layer.handle [as handle_request] (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/layer.js:95)
+<anonymous> (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:284)
+Function.process_params (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:346)
+next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:280)`
+
+  const actualStackTrace = stackTraceElements
+    .map((pStackTraceElement) => toStackTraceLine(
+      pStackTraceElement.getClassname(),
+      pStackTraceElement.getMethodname(),
+      pStackTraceElement.getFilename(),
+      pStackTraceElement.getLinenumber()
+    ))
+    .join('\n')
+
+  t.equal(actualStackTrace, expectedStackTrace, 'ExceptionMetaData stack trace should match span event frameStack as multiline string')
 }
 
 const testName2 = 'express2'
