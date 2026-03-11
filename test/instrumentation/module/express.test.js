@@ -305,17 +305,18 @@ function unhandledExceptionStatsFrameTest(trace, t) {
     return `${typePrefix}${method} (${file}:${line})`
   }
 
-  const expectedStackTrace =
-`<anonymous> (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/test/instrumentation/module/express.test.js:124)
-Layer.handle [as handle_request] (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/layer.js:95)
-next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/route.js:149)
-Route.dispatch (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/route.js:119)
-InterceptorRunner.run (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/lib/instrumentation/interceptor-runner.js:39)
-wrapped (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/lib/instrumentation/module/express/express-layer-interceptor.js:44)
-Layer.handle [as handle_request] (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/layer.js:95)
-<anonymous> (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:284)
-Function.process_params (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:346)
-next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:280)`
+  const expectedStackTrace = [
+    '<anonymous> (<workspace>/test/instrumentation/module/express.test.js:<line>)',
+    'Layer.handle [as handle_request] (<workspace>/node_modules/express/lib/router/layer.js:95)',
+    'next (<workspace>/node_modules/express/lib/router/route.js:149)',
+    'Route.dispatch (<workspace>/node_modules/express/lib/router/route.js:119)',
+    'InterceptorRunner.run (<workspace>/lib/instrumentation/interceptor-runner.js:39)',
+    'wrapped (<workspace>/lib/instrumentation/module/express/express-layer-interceptor.js:44)',
+    'Layer.handle [as handle_request] (<workspace>/node_modules/express/lib/router/layer.js:95)',
+    '<anonymous> (<workspace>/node_modules/express/lib/router/index.js:284)',
+    'Function.process_params (<workspace>/node_modules/express/lib/router/index.js:346)',
+    'next (<workspace>/node_modules/express/lib/router/index.js:280)',
+  ].join('\n')
 
   const actualStackTrace = stackTraceElements
     .map((pStackTraceElement) => toStackTraceLine(
@@ -326,13 +327,18 @@ next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/expres
     ))
     .join('\n')
 
-  const normalizeExpressTestLine = (stackTrace) => {
-    return stackTrace.replace(/express\.test\.js:\d+/g, 'express.test.js:<line>')
+  const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const workspacePath = process.cwd().replace(/\\/g, '/')
+  const normalizeStackTrace = (stackTrace) => {
+    return stackTrace
+      .replace(/\\/g, '/')
+      .replace(new RegExp(escapeRegExp(workspacePath), 'g'), '<workspace>')
+      .replace(/express\.test\.js:\d+/g, 'express.test.js:<line>')
   }
 
   t.equal(
-    normalizeExpressTestLine(actualStackTrace),
-    normalizeExpressTestLine(expectedStackTrace),
+    normalizeStackTrace(actualStackTrace),
+    normalizeStackTrace(expectedStackTrace),
     'ExceptionMetaData stack trace should match span event frameStack as multiline string'
   )
 }
@@ -1334,25 +1340,31 @@ test('Functional Test: requestExceptionMetaData should deliver converted excepti
           })
           .join('\n')
 
-        const expectedStackTrace =
-`<anonymous> (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/test/instrumentation/module/express.test.js:<line>)
-Layer.handle [as handle_request] (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/layer.js:95)
-next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/route.js:149)
-Route.dispatch (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/route.js:119)
-InterceptorRunner.run (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/lib/instrumentation/interceptor-runner.js:39)
-wrapped (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/lib/instrumentation/module/express/express-layer-interceptor.js:44)
-Layer.handle [as handle_request] (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/layer.js:95)
-<anonymous> (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:284)
-Function.process_params (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:346)
-next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:280)`
+        const expectedStackTrace = [
+          '<anonymous> (<workspace>/test/instrumentation/module/express.test.js:<line>)',
+          'Layer.handle [as handle_request] (<workspace>/node_modules/express/lib/router/layer.js:95)',
+          'next (<workspace>/node_modules/express/lib/router/route.js:149)',
+          'Route.dispatch (<workspace>/node_modules/express/lib/router/route.js:119)',
+          'InterceptorRunner.run (<workspace>/lib/instrumentation/interceptor-runner.js:39)',
+          'wrapped (<workspace>/lib/instrumentation/module/express/express-layer-interceptor.js:44)',
+          'Layer.handle [as handle_request] (<workspace>/node_modules/express/lib/router/layer.js:95)',
+          '<anonymous> (<workspace>/node_modules/express/lib/router/index.js:284)',
+          'Function.process_params (<workspace>/node_modules/express/lib/router/index.js:346)',
+          'next (<workspace>/node_modules/express/lib/router/index.js:280)',
+        ].join('\n')
 
-        const normalizeExpressTestLine = (stackTrace) => {
-          return stackTrace.replace(/express\.test\.js:\d+/g, 'express.test.js:<line>')
+        const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const workspacePath = process.cwd().replace(/\\/g, '/')
+        const normalizeStackTrace = (stackTrace) => {
+          return stackTrace
+            .replace(/\\/g, '/')
+            .replace(new RegExp(escapeRegExp(workspacePath), 'g'), '<workspace>')
+            .replace(/express\.test\.js:\d+/g, 'express.test.js:<line>')
         }
 
         t.ok(actualStackTrace.includes('Pinpoint unhandled exception test route') === false, 'stack trace should not include error message line')
         t.equal(
-          normalizeExpressTestLine(actualStackTrace),
+          normalizeStackTrace(actualStackTrace),
           expectedStackTrace,
           'gRPC delivered stack trace should match expected multiline stack trace'
         )
