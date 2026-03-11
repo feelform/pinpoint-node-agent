@@ -18,6 +18,8 @@ const https = require('https')
 const { getTransactionId, getDisabledId } = require('../../../lib/context/trace/id-generator')
 const grpc = require('@grpc/grpc-js')
 const services = require('../../../lib/data/v1/Service_grpc_pb')
+const spanMessages = require('../../../lib/data/v1/Span_pb')
+const GrpcDataSenderBuilder = require('../../client/grpc-data-sender-builder')
 const { beforeSpecificOne, StatOnlyFunctionalTestableDataSource, DataSourceCallCountable } = require('../../../test/client/grpc-fixture')
 const { UriStatsSnapshot } = require('../../../lib/metric/uri/uri-stats-snapshot')
 const { UriStatsInfo } = require('../../../lib/metric/uri/uri-stats-info-builder')
@@ -324,7 +326,15 @@ next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/expres
     ))
     .join('\n')
 
-  t.equal(actualStackTrace, expectedStackTrace, 'ExceptionMetaData stack trace should match span event frameStack as multiline string')
+  const normalizeExpressTestLine = (stackTrace) => {
+    return stackTrace.replace(/express\.test\.js:\d+/g, 'express.test.js:<line>')
+  }
+
+  t.equal(
+    normalizeExpressTestLine(actualStackTrace),
+    normalizeExpressTestLine(expectedStackTrace),
+    'ExceptionMetaData stack trace should match span event frameStack as multiline string'
+  )
 }
 
 const testName2 = 'express2'
@@ -1279,6 +1289,125 @@ test('sendStat with UriStatsSnapshot', (t) => {
     }
 
     grpcDataSender.sendStat(snapshot)
+  })
+})
+
+test('Functional Test: requestExceptionMetaData should deliver converted exception stack for /exception/unhandled', (t) => {
+  const collectorServer = new grpc.Server()
+  let dataSender
+  let metadataReceived
+  const metadataReceivedPromise = new Promise((resolve, reject) => {
+    metadataReceived = { resolve, reject }
+  })
+
+  collectorServer.addService(services.MetadataService, {
+    requestExceptionMetaData: (call, callback) => {
+      callback(null, new spanMessages.PResult())
+
+      try {
+        const exceptionMetaData = call.request
+        t.ok(exceptionMetaData, 'ExceptionMetaData should be delivered to collector')
+        t.ok(exceptionMetaData.getTransactionid(), 'transactionId should exist')
+        t.ok(exceptionMetaData.getSpanid(), 'spanId should exist')
+        t.equal(exceptionMetaData.getUritemplate(), 'NULL', 'uriTemplate should be NULL by default')
+
+        const exceptions = exceptionMetaData.getExceptionsList()
+        t.equal(exceptions.length, 1, 'exceptions length should be 1')
+
+        const exception = exceptions[0]
+        t.equal(exception.getExceptionclassname(), 'Error', 'exception class should be Error')
+        t.equal(exception.getExceptionmessage(), 'Pinpoint unhandled exception test route', 'exception message should match')
+        t.ok(exception.getExceptionid() > 0, 'exception id should be greater than 0')
+        t.equal(exception.getExceptiondepth(), 1, 'exception depth should be 1')
+
+        const stackTraceElements = exception.getStacktraceelementList()
+        t.ok(stackTraceElements.length > 0, 'stackTraceElements should not be empty')
+
+        const actualStackTrace = stackTraceElements
+          .map((pStackTraceElement) => {
+            const className = pStackTraceElement.getClassname() || ''
+            const methodName = pStackTraceElement.getMethodname() || '<anonymous>'
+            const fileName = pStackTraceElement.getFilename() || 'unknown'
+            const lineNumber = pStackTraceElement.getLinenumber()
+            const typePrefix = className ? `${className}.` : ''
+            return `${typePrefix}${methodName} (${fileName}:${lineNumber})`
+          })
+          .join('\n')
+
+        const expectedStackTrace =
+`<anonymous> (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/test/instrumentation/module/express.test.js:<line>)
+Layer.handle [as handle_request] (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/layer.js:95)
+next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/route.js:149)
+Route.dispatch (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/route.js:119)
+InterceptorRunner.run (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/lib/instrumentation/interceptor-runner.js:39)
+wrapped (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/lib/instrumentation/module/express/express-layer-interceptor.js:44)
+Layer.handle [as handle_request] (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/layer.js:95)
+<anonymous> (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:284)
+Function.process_params (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:346)
+next (/Users/feelform/workspace/pinpoint/pinpoint-node-agent/node_modules/express/lib/router/index.js:280)`
+
+        const normalizeExpressTestLine = (stackTrace) => {
+          return stackTrace.replace(/express\.test\.js:\d+/g, 'express.test.js:<line>')
+        }
+
+        t.ok(actualStackTrace.includes('Pinpoint unhandled exception test route') === false, 'stack trace should not include error message line')
+        t.equal(
+          normalizeExpressTestLine(actualStackTrace),
+          expectedStackTrace,
+          'gRPC delivered stack trace should match expected multiline stack trace'
+        )
+
+        metadataReceived.resolve()
+      } catch (error) {
+        metadataReceived.reject(error)
+      }
+    }
+  })
+
+  collectorServer.bindAsync('localhost:0', grpc.ServerCredentials.createInsecure(), (err, port) => {
+    if (err) {
+      t.fail(err)
+      collectorServer.forceShutdown()
+      t.end()
+      return
+    }
+
+    dataSender = new GrpcDataSenderBuilder(port)
+      .enableExceptionMetaData()
+      .build()
+    agent.bindHttp(dataSender)
+
+    const app = new express()
+    app.get('/exception/unhandled', function (req, res, next) {
+      const error = new Error('Pinpoint unhandled exception test route')
+      error.status = 500
+      next(error)
+    })
+    app.use(function (err, req, res, next) {
+      res.status(500).send('Something broke!')
+    })
+
+    const server = app.listen(0, async () => {
+      try {
+        const serverPort = server.address().port
+        const response = await axios.get(`http://localhost:${serverPort}/exception/unhandled`, {
+          validateStatus: () => true,
+          httpAgent: new http.Agent({ keepAlive: false }),
+          httpsAgent: new https.Agent({ keepAlive: false }),
+        })
+
+        t.equal(response.status, 500, 'route should return 500')
+        await metadataReceivedPromise
+      } catch (error) {
+        t.fail(error?.stack || error?.message || String(error))
+      } finally {
+        server.close(() => {
+          dataSender?.close()
+          collectorServer.forceShutdown()
+          t.end()
+        })
+      }
+    })
   })
 })
 
